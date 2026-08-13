@@ -50,7 +50,7 @@ tmp/
 temp/
 
 ### Go ###
-backend-go/server
+server
 *.exe
 *.exe~
 *.dll

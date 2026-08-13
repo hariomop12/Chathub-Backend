@@ -104,7 +104,6 @@ The app uses separate config for API, WebSocket, and PeerJS connectivity:
 
 ```bash
 # Clone and navigate
-cd backend-go
 
 # Copy environment config
 cp .env.example .env
@@ -168,7 +167,6 @@ docker pull ghcr.io/<your-github-username>/real-time-chat-app-backend:latest
 ### API Documentation
 
 ```bash
-cd backend-go
 npx @redocly/cli preview-docs openapi.yaml
 ```
 
@@ -182,33 +180,22 @@ npx @redocly/cli build-docs openapi.yaml -o docs/index.html
 
 ```
 .
-├── backend-go/                  # 🦫 Go backend
-│   ├── cmd/server/main.go       # Entry point
-│   ├── db/migrations/           # dbmate SQL migrations
-│   ├── internal/
-│   │   ├── config/              # Environment config
-│   │   ├── db/                  # Database connection
-│   │   ├── handler/             # HTTP handlers
-│   │   ├── middleware/          # Auth middleware
-│   │   ├── model/               # GORM models
-│   │   ├── repository/          # Data access layer
-│   │   ├── router/              # Route setup
-│   │   └── ws/                  # WebSocket hub
-│   ├── openapi.yaml             # API specification
-│   └── go.mod
-│
-├── frontend/                    # ⚛️ React frontend
-│   ├── src/
-│   │   ├── api/                 # API client
-│   │   ├── components/          # Reusable UI components
-│   │   ├── context/             # React contexts (ThemeContext)
-│   │   ├── hooks/               # Custom hooks
-│   │   ├── pages/               # Route pages
-│   │   └── socket/              # Native WebSocket client
-│   ├── package.json
-│   └── vite.config.ts
-│
-└── .github/workflows/           # CI/CD pipelines
+├── cmd/server/main.go       # Entry point
+├── db/migrations/           # dbmate SQL migrations
+├── internal/
+│   ├── config/              # Environment config
+│   ├── db/                  # Database connection
+│   ├── handler/             # HTTP handlers
+│   ├── middleware/          # Auth middleware
+│   ├── model/               # GORM models
+│   ├── repository/          # Data access layer
+│   ├── router/              # Route setup
+│   └── ws/                  # WebSocket hub
+├── openapi.yaml             # API specification
+├── postman/                 # Postman collection
+├── go.mod
+├── Dockerfile
+└── .github/workflows/       # CI/CD pipelines
 ```
 
 ## 🌐 API Endpoints

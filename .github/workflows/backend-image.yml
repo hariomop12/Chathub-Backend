@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "backend-go/**"
-      - ".github/workflows/backend-image.yml"
   workflow_dispatch:
 
 permissions:
@@ -49,8 +46,8 @@ jobs:
       - name: Build and push backend image
         uses: docker/build-push-action@v6
         with:
-          context: ./backend-go
-          file: ./backend-go/Dockerfile
+          context: .
+          file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
