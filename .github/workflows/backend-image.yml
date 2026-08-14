@@ -1,9 +1,10 @@
-name: Build and Deploy Backend
+name: CI
 
 on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -15,8 +16,63 @@ env:
   IMAGE_NAME: chathub-backend
 
 jobs:
-  build-and-push:
+  ci:
+    name: Go CI (build / vet / test)
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  migrate:
+    name: Run DB migrations (dbmate)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: ci
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dbmate
+        run: |
+          curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+          chmod +x /usr/local/bin/dbmate
+          dbmate --version
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::DATABASE_URL secret is not set. Add it in Settings > Secrets and variables > Actions. Skipping migrations."
+            exit 0
+          fi
+          dbmate --wait up
+
+  build-and-push:
+    name: Build & push Docker image to GHCR
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [ci, migrate]
 
     steps:
       - name: Checkout repository
@@ -39,8 +95,9 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
+            type=sha
           labels: |
-            org.opencontainers.image.title=real-time-chat-app backend
+            org.opencontainers.image.title=chathub backend
             org.opencontainers.image.description=Backend API for the real-time chat app
 
       - name: Build and push backend image

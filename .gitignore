@@ -50,7 +50,7 @@ tmp/
 temp/
 
 ### Go ###
-server
+/server
 *.exe
 *.exe~
 *.dll
@@ -85,6 +85,10 @@ build/
 *.sql
 *.sql.gz
 
+# dbmate migrations are tracked (except the auto-generated schema dump)
+!db/migrations/*.sql
+db/schema.sql
+
 ### Misc ###
 .envrc
 .history/
@@ -98,3 +102,6 @@ package-lock.json
 yarn.lock
 yarn-error.log
 .vercel
+
+### Local planning (do not push) ###
+PLAN.md

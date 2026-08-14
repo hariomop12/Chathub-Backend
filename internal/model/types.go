@@ -10,15 +10,15 @@ type User struct {
 }
 
 type Chat struct {
-	ID            string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	Name          *string   `gorm:"type:text" json:"name"`
-	IsGroup       bool      `gorm:"column:is_group;not null;default:false" json:"is_group"`
-	CreatedAt     time.Time `gorm:"autoCreateTime" json:"created_at"`
-	LastMessage   *string   `gorm:"-" json:"last_message,omitempty"`
+	ID            string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	Name          *string    `gorm:"type:text" json:"name"`
+	IsGroup       bool       `gorm:"column:is_group;not null;default:false" json:"is_group"`
+	CreatedAt     time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	LastMessage   *string    `gorm:"-" json:"last_message,omitempty"`
 	LastMessageAt *time.Time `gorm:"-" json:"last_message_at,omitempty"`
-	OtherUserID   *string   `gorm:"-" json:"other_user_id,omitempty"`
-	OtherUsername *string   `gorm:"-" json:"other_username,omitempty"`
-	OtherAvatar   *string   `gorm:"-" json:"other_avatar,omitempty"`
+	OtherUserID   *string    `gorm:"-" json:"other_user_id,omitempty"`
+	OtherUsername *string    `gorm:"-" json:"other_username,omitempty"`
+	OtherAvatar   *string    `gorm:"-" json:"other_avatar,omitempty"`
 }
 
 func (Chat) TableName() string { return "chats" }

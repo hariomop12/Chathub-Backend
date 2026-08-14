@@ -1,31 +1,35 @@
 package router
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
-	"github.com/rs/cors"
-	"gorm.io/gorm"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/config"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/handler"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/middleware"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/repository"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/ws"
+	"github.com/rs/cors"
+	"gorm.io/gorm"
 )
 
 func New(cfg *config.Config, database *gorm.DB, userRepo *repository.UserRepo, chatRepo *repository.ChatRepo, messageRepo *repository.MessageRepo) http.Handler {
+	logger := slog.Default()
+
 	r := chi.NewRouter()
 
-	r.Use(chimw.Logger)
-	r.Use(chimw.Recoverer)
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Logging(logger))
+	r.Use(middleware.Recoverer(logger))
 	r.Use(chimw.RealIP)
 
 	corsHandler := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type"},
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "X-Request-ID"},
+		ExposedHeaders: []string{"X-Request-ID"},
 	})
 	r.Use(corsHandler.Handler)
 
@@ -42,7 +46,7 @@ func New(cfg *config.Config, database *gorm.DB, userRepo *repository.UserRepo, c
 
 	uploadH, err := handler.NewUploadHandler(cfg)
 	if err != nil {
-		log.Printf("Upload handler disabled: %v", err)
+		logger.Warn("upload handler disabled", "error", err)
 		var nilUpload *handler.UploadHandler
 		uploadH = nilUpload
 	}
@@ -52,11 +56,13 @@ func New(cfg *config.Config, database *gorm.DB, userRepo *repository.UserRepo, c
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Chat API running..."))
 	})
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+	r.Get("/readyz", healthH.Check)
 
-	r.Get("/health", healthH.Check)
-	r.Get("/api/health", healthH.Check)
-
-	r.Route("/api", func(r chi.Router) {
+	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/webhooks", func(r chi.Router) {
 			r.Post("/clerk", webhookH.HandleClerk)
 		})

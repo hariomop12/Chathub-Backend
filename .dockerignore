@@ -1,4 +1,10 @@
 .env
 .git
+.github
 tmp/
 server
+db/
+postman/
+Makefile
+PLAN.md
+README.md

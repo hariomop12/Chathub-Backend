@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/config"
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/httpapi"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/model"
 )
 
@@ -39,7 +40,7 @@ func NewUploadHandler(cfg *config.Config) (*UploadHandler, error) {
 		o.UsePathStyle = true
 	})
 
-	log.Printf("Upload handler initialized: bucket=%s, endpoint=%s", cfg.R2Bucket, cfg.R2Endpoint)
+	slog.Info("upload handler initialized", "bucket", cfg.R2Bucket, "endpoint", cfg.R2Endpoint)
 
 	return &UploadHandler{
 		client:    client,
@@ -49,30 +50,29 @@ func NewUploadHandler(cfg *config.Config) (*UploadHandler, error) {
 }
 
 func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
-	log.Printf("UploadFile: starting upload request, content-length=%d", r.ContentLength)
+	slog.Info("upload request", "content_length", r.ContentLength)
 
 	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		log.Printf("UploadFile: parse multipart form failed: %v", err)
-		writeErr(w, http.StatusBadRequest, "File too large or invalid form")
+		slog.Warn("parse multipart form failed", "error", err)
+		httpapi.WriteErr(w, http.StatusBadRequest, "PAYLOAD_TOO_LARGE", "File too large or invalid form")
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		log.Printf("UploadFile: no file in form: %v", err)
-		writeErr(w, http.StatusBadRequest, "No file provided")
+		slog.Warn("no file in form", "error", err)
+		httpapi.WriteErr(w, http.StatusBadRequest, "", "No file provided")
 		return
 	}
 	defer file.Close()
 
-	log.Printf("UploadFile: received file name=%s, size=%d, content-type=%s",
-		header.Filename, header.Size, header.Header.Get("Content-Type"))
+	slog.Info("upload file received", "name", header.Filename, "size", header.Size, "content_type", header.Header.Get("Content-Type"))
 
 	if header.Size > 50<<20 {
-		log.Printf("UploadFile: file too large: %d bytes", header.Size)
-		writeErr(w, http.StatusBadRequest, "File exceeds 50MB limit")
+		slog.Warn("file too large", "size", header.Size)
+		httpapi.WriteErr(w, http.StatusBadRequest, "PAYLOAD_TOO_LARGE", "File exceeds 50MB limit")
 		return
 	}
 
@@ -85,17 +85,17 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := uuid.New().String() + ext
-	log.Printf("UploadFile: generated object key=%s", key)
+	slog.Info("generated object key", "key", key)
 
 	body, err := io.ReadAll(file)
 	if err != nil {
-		log.Printf("UploadFile: failed to read file body: %v", err)
-		writeErr(w, http.StatusInternalServerError, "Failed to read file")
+		slog.Warn("failed to read file body", "error", err)
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to read file")
 		return
 	}
-	log.Printf("UploadFile: read %d bytes from file", len(body))
+	slog.Info("read file bytes", "size", len(body))
 
-	log.Printf("UploadFile: uploading to S3 bucket=%s, key=%s", h.bucket, key)
+	slog.Info("uploading to s3", "bucket", h.bucket, "key", key)
 	_, err = h.client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(h.bucket),
 		Key:         aws.String(key),
@@ -103,19 +103,17 @@ func (h *UploadHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		ContentType: aws.String(header.Header.Get("Content-Type")),
 	})
 	if err != nil {
-		log.Printf("UploadFile: S3 PutObject FAILED: %v", err)
-		writeErr(w, http.StatusInternalServerError, "Failed to upload file")
+		slog.Error("s3 put object failed", "error", err)
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to upload file")
 		return
 	}
 
-	log.Printf("UploadFile: upload successful, url=%s/%s", h.publicURL, key)
+	slog.Info("upload successful", "url", h.publicURL+"/"+key)
 
-	writeJSON(w, http.StatusOK, model.UploadResponse{
+	httpapi.WriteJSON(w, http.StatusOK, model.UploadResponse{
 		URL:  h.publicURL + "/" + key,
 		Name: header.Filename,
 		Type: header.Header.Get("Content-Type"),
 		Size: header.Size,
 	})
 }
-
-

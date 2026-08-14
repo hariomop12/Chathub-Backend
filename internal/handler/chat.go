@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/httpapi"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/middleware"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/model"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/repository"
@@ -23,10 +24,10 @@ func (h *ChatHandler) GetChats(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.UserIDFromCtx(r.Context())
 	chats, err := h.chatRepo.GetByUser(userID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "Failed to fetch chats")
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to fetch chats")
 		return
 	}
-	writeJSON(w, http.StatusOK, chats)
+	httpapi.WriteJSON(w, http.StatusOK, chats)
 }
 
 func (h *ChatHandler) CreateChat(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +35,7 @@ func (h *ChatHandler) CreateChat(w http.ResponseWriter, r *http.Request) {
 
 	var req model.CreateChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "Invalid request body")
+		httpapi.WriteErr(w, http.StatusBadRequest, "", "Invalid request body")
 		return
 	}
 
@@ -56,7 +57,7 @@ func (h *ChatHandler) CreateChat(w http.ResponseWriter, r *http.Request) {
 		if err == nil && existingID != nil {
 			chat, err := h.chatRepo.GetByID(*existingID, userID)
 			if err == nil {
-				writeJSON(w, http.StatusOK, chat)
+				httpapi.WriteJSON(w, http.StatusOK, chat)
 				return
 			}
 		}
@@ -64,12 +65,12 @@ func (h *ChatHandler) CreateChat(w http.ResponseWriter, r *http.Request) {
 
 	chatID, err := h.chatRepo.Create(req.Name, isGroup)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "Failed to create chat")
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to create chat")
 		return
 	}
 
 	if err := h.chatRepo.AddMembers(chatID, req.ParticipantIds); err != nil {
-		writeErr(w, http.StatusInternalServerError, "Failed to add members")
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to add members")
 		return
 	}
 
@@ -79,7 +80,7 @@ func (h *ChatHandler) CreateChat(w http.ResponseWriter, r *http.Request) {
 			h.chatRepo.DeleteDirect(chatID, userID)
 			chat, err := h.chatRepo.GetByID(*existingID, userID)
 			if err == nil {
-				writeJSON(w, http.StatusOK, chat)
+				httpapi.WriteJSON(w, http.StatusOK, chat)
 				return
 			}
 		}
@@ -88,18 +89,18 @@ func (h *ChatHandler) CreateChat(w http.ResponseWriter, r *http.Request) {
 	chat, err := h.chatRepo.GetByID(chatID, userID)
 	if err != nil {
 		if isGroup {
-			writeJSON(w, http.StatusCreated, map[string]string{"id": chatID})
+			httpapi.WriteJSON(w, http.StatusCreated, map[string]string{"id": chatID})
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, "Failed to fetch created chat")
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to fetch created chat")
 		return
 	}
 
 	if isGroup {
-		writeJSON(w, http.StatusCreated, map[string]string{"id": chatID})
+		httpapi.WriteJSON(w, http.StatusCreated, map[string]string{"id": chatID})
 		return
 	}
-	writeJSON(w, http.StatusCreated, chat)
+	httpapi.WriteJSON(w, http.StatusCreated, chat)
 }
 
 func (h *ChatHandler) GetChatByID(w http.ResponseWriter, r *http.Request) {
@@ -108,10 +109,10 @@ func (h *ChatHandler) GetChatByID(w http.ResponseWriter, r *http.Request) {
 
 	chat, err := h.chatRepo.GetByID(chatID, userID)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "Chat not found")
+		httpapi.WriteErr(w, http.StatusNotFound, "", "Chat not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, chat)
+	httpapi.WriteJSON(w, http.StatusOK, chat)
 }
 
 func (h *ChatHandler) DeleteDirectChat(w http.ResponseWriter, r *http.Request) {
@@ -120,12 +121,12 @@ func (h *ChatHandler) DeleteDirectChat(w http.ResponseWriter, r *http.Request) {
 
 	deleted, err := h.chatRepo.DeleteDirect(chatID, userID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "Failed to delete chat")
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to delete chat")
 		return
 	}
 	if !deleted {
-		writeErr(w, http.StatusNotFound, "Direct chat not found")
+		httpapi.WriteErr(w, http.StatusNotFound, "", "Direct chat not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"deleted": true, "chatId": chatID})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]interface{}{"deleted": true, "chatId": chatID})
 }

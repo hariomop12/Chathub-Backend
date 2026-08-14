@@ -18,6 +18,7 @@ type Config struct {
 	ClientURL       string
 	AllowedOrigins  []string
 	PeerJSPort      string
+	LogLevel        string
 }
 
 func Load() *Config {
@@ -34,6 +35,7 @@ func Load() *Config {
 		ClientURL:       getEnv("CLIENT_URL", "http://localhost:5173"),
 		AllowedOrigins:  parseOrigins(getEnv("ALLOWED_ORIGINS", "")),
 		PeerJSPort:      getEnv("PEERJS_PORT", "5001"),
+		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 }
 

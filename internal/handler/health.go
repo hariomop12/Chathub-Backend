@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/httpapi"
 	"gorm.io/gorm"
 )
 
@@ -54,9 +55,9 @@ func (h *HealthHandler) Check(w http.ResponseWriter, r *http.Request) {
 		checks["peerjs"] = "ok"
 	}
 
-	writeJSON(w, status, map[string]interface{}{
-		"status":  http.StatusText(status),
-		"checks":  checks,
+	httpapi.WriteJSON(w, status, map[string]interface{}{
+		"status":   http.StatusText(status),
+		"checks":   checks,
 		"peerAddr": peerAddr,
 	})
 }

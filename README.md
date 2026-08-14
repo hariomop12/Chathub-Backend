@@ -103,20 +103,43 @@ The app uses separate config for API, WebSocket, and PeerJS connectivity:
 ### Backend
 
 ```bash
-# Clone and navigate
-
 # Copy environment config
 cp .env.example .env
 # Edit .env with your own credentials
 
-# Run database migrations
+# Run database migrations (dbmate auto-loads .env)
 dbmate up
 
 # Start the server
 go run ./cmd/server/
 ```
 
+Or use the Makefile:
+
+```bash
+make run             # go run ./cmd/server
+make build           # go build -o server ./cmd/server
+make migrate         # dbmate up
+make migrate-new     # dbmate new NAME=<name>
+make migrate-status  # dbmate status
+make migrate-down    # dbmate rollback
+make vet             # go vet ./...
+make test            # go test ./...
+```
+
 Server starts on **`http://localhost:5000`**
+
+### Database Migrations
+
+Migrations are managed with **dbmate** and live in `db/migrations/`.
+
+**When do migrations run?**
+
+- **Local dev:** run `make migrate` (or `dbmate up`) — dbmate reads `DATABASE_URL` from `.env`.
+- **CI/CD (main push):** the `migrate` job in `.github/workflows/backend-image.yml` runs `dbmate --wait up` against `DATABASE_URL` **before** the Docker image is built and pushed. Add the `DATABASE_URL` secret in GitHub repo **Settings → Secrets and variables → Actions**.
+- Migrations are **never** run inside the app container. They are applied explicitly before a new deploy rolls out, so the schema is updated first.
+
+If your existing database already has tables created outside dbmate, `dbmate up` will fail with `relation already exists`. In that case either recreate the database, or baseline the existing schema before adding new migrations.
 
 ### Frontend
 
@@ -154,14 +177,14 @@ For production, set `VITE_PEER_HOST` to the actual PeerJS host or subdomain if y
 
 The backend image is published by GitHub Actions on pushes to `main`:
 
-- Image: `ghcr.io/<your-github-username>/real-time-chat-app-backend`
+- Image: `ghcr.io/<your-github-username>/chathub-backend`
 - Tags: `latest` and the short commit SHA
-- Workflow: [`.github/workflows/backend-image.yml`](/home/h/real-time-chat-app/.github/workflows/backend-image.yml)
+- Workflow: [`.github/workflows/backend-image.yml`](.github/workflows/backend-image.yml)
 
 Pull it with:
 
 ```bash
-docker pull ghcr.io/<your-github-username>/real-time-chat-app-backend:latest
+docker pull ghcr.io/<your-github-username>/chathub-backend:latest
 ```
 
 ### API Documentation
@@ -186,13 +209,16 @@ npx @redocly/cli build-docs openapi.yaml -o docs/index.html
 │   ├── config/              # Environment config
 │   ├── db/                  # Database connection
 │   ├── handler/             # HTTP handlers
-│   ├── middleware/          # Auth middleware
+│   ├── httpapi/             # Response/error helpers + request-id
+│   ├── logging/             # slog structured logging
+│   ├── middleware/          # Auth, request-id, logging, recoverer
 │   ├── model/               # GORM models
 │   ├── repository/          # Data access layer
-│   ├── router/              # Route setup
+│   ├── router/              # Route setup (/api/v1)
 │   └── ws/                  # WebSocket hub
 ├── openapi.yaml             # API specification
 ├── postman/                 # Postman collection
+├── Makefile                 # Dev/migration shortcuts
 ├── go.mod
 ├── Dockerfile
 └── .github/workflows/       # CI/CD pipelines
@@ -202,20 +228,22 @@ npx @redocly/cli build-docs openapi.yaml -o docs/index.html
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/` | ❌ | Health check |
-| `GET` | `/api/health` | ❌ | Full health check (DB + PeerJS) |
-| `GET` | `/api/users` | ✅ | List all users |
-| `POST` | `/api/users` | ✅ | Create/update current user |
-| `GET` | `/api/users/search?q=` | ✅ | Search users |
-| `GET` | `/api/chats` | ✅ | List user's chats |
-| `POST` | `/api/chats` | ✅ | Create a chat |
-| `GET` | `/api/chats/:id` | ✅ | Get chat details |
-| `DELETE` | `/api/chats/:id` | ✅ | Delete direct chat |
-| `GET` | `/api/messages/:chatId` | ✅ | Get messages |
-| `POST` | `/api/messages/:chatId` | ✅ | Send message |
-| `POST` | `/api/upload` | ✅ | Upload file |
-| `POST` | `/api/webhooks/clerk` | ❌ | Clerk webhook |
+| `GET` | `/health` | ❌ | Liveness check |
+| `GET` | `/readyz` | ❌ | Readiness check (DB + PeerJS) |
+| `GET` | `/api/v1/users` | ✅ | List all users |
+| `POST` | `/api/v1/users` | ✅ | Create/update current user |
+| `GET` | `/api/v1/users/search?q=` | ✅ | Search users |
+| `GET` | `/api/v1/chats` | ✅ | List user's chats |
+| `POST` | `/api/v1/chats` | ✅ | Create a chat |
+| `GET` | `/api/v1/chats/:id` | ✅ | Get chat details |
+| `DELETE` | `/api/v1/chats/:id` | ✅ | Delete direct chat |
+| `GET` | `/api/v1/messages/:chatId` | ✅ | Get messages |
+| `POST` | `/api/v1/messages/:chatId` | ✅ | Send message |
+| `POST` | `/api/v1/upload` | ✅ | Upload file |
+| `POST` | `/api/v1/webhooks/clerk` | ❌ | Clerk webhook |
 | `WS` | `/ws` | ❌ | WebSocket connection |
+
+All errors use a consistent shape: `{"error": {"code": "NOT_FOUND", "message": "...", "request_id": "..."}}`. Every response includes an `X-Request-ID` header for tracing.
 
 ## 🧪 Tech Stack
 

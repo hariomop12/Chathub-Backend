@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/httpapi"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/repository"
 	svix "github.com/svix/svix-webhooks/go"
 )
@@ -20,24 +21,24 @@ func NewWebhookHandler(userRepo *repository.UserRepo, secret string) *WebhookHan
 
 func (h *WebhookHandler) HandleClerk(w http.ResponseWriter, r *http.Request) {
 	if h.secret == "" {
-		writeErr(w, http.StatusInternalServerError, "Missing CLERK_WEBHOOK_SECRET")
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Missing CLERK_WEBHOOK_SECRET")
 		return
 	}
 
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "Failed to read body")
+		httpapi.WriteErr(w, http.StatusBadRequest, "", "Failed to read body")
 		return
 	}
 
 	wh, err := svix.NewWebhook(h.secret)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "Webhook init failed")
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Webhook init failed")
 		return
 	}
 
 	if err := wh.Verify(payload, r.Header); err != nil {
-		writeErr(w, http.StatusBadRequest, "Invalid webhook signature")
+		httpapi.WriteErr(w, http.StatusBadRequest, "", "Invalid webhook signature")
 		return
 	}
 
@@ -46,7 +47,7 @@ func (h *WebhookHandler) HandleClerk(w http.ResponseWriter, r *http.Request) {
 		Data map[string]interface{} `json:"data"`
 	}
 	if err := json.Unmarshal(payload, &event); err != nil {
-		writeErr(w, http.StatusBadRequest, "Invalid payload")
+		httpapi.WriteErr(w, http.StatusBadRequest, "", "Invalid payload")
 		return
 	}
 
@@ -67,7 +68,7 @@ func (h *WebhookHandler) HandleClerk(w http.ResponseWriter, r *http.Request) {
 		h.userRepo.Delete(id)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]bool{"received": true})
+	httpapi.WriteJSON(w, http.StatusOK, map[string]bool{"received": true})
 }
 
 func buildDisplayName(userData map[string]interface{}) string {

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/httpapi"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/middleware"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/model"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/repository"
@@ -25,10 +26,10 @@ func (h *MessageHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 	chatID := chi.URLParam(r, "chatId")
 	messages, err := h.repo.GetByChat(chatID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "Failed to fetch messages")
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to fetch messages")
 		return
 	}
-	writeJSON(w, http.StatusOK, messages)
+	httpapi.WriteJSON(w, http.StatusOK, messages)
 }
 
 func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +45,7 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		slog.Warn("[handler] SendMessage — decode error", "error", err)
-		writeErr(w, http.StatusBadRequest, "Invalid request body")
+		httpapi.WriteErr(w, http.StatusBadRequest, "", "Invalid request body")
 		return
 	}
 
@@ -64,7 +65,7 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		slog.Error("[handler] SendMessage — db create error", "error", err)
-		writeErr(w, http.StatusInternalServerError, "Failed to send message")
+		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to send message")
 		return
 	}
 
@@ -77,5 +78,5 @@ func (h *MessageHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusCreated, msg)
+	httpapi.WriteJSON(w, http.StatusCreated, msg)
 }

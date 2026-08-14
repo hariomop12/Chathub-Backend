@@ -60,7 +60,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	client := &Client{
 		conn:  conn,
 		hub:   h,
-		send: make(chan []byte, 256),
+		send:  make(chan []byte, 256),
 		rooms: make(map[string]bool),
 	}
 
@@ -307,7 +307,7 @@ func (c *Client) handleEvent(event struct {
 			TargetUserID   string `json:"targetUserId"`
 			CallerID       string `json:"callerId"`
 			CallerUsername string `json:"callerUsername"`
-			CallerAvatar  string `json:"callerAvatar"`
+			CallerAvatar   string `json:"callerAvatar"`
 			IsVideo        bool   `json:"isVideo"`
 		}
 		json.Unmarshal(event.Data, &data)
