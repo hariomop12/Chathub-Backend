@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Google ID Token Grabber</title>
+  <script src="https://accounts.google.com/gsi/client" referrerpolicy="origin"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #111; color: #eee; margin: 0; padding: 24px; }
+    h1 { font-size: 20px; }
+    #button, #tokenbox, #copy, #info { margin-top: 16px; }
+    #tokenbox {
+      width: 100%; min-height: 180px; background: #000; color: #7cfc7c;
+      border: 1px solid #333; border-radius: 6px; padding: 10px;
+      font-family: monospace; font-size: 12px; box-sizing: border-box; word-break: break-all;
+    }
+    button { padding: 10px 18px; border: 0; border-radius: 6px; background: #4285f4; color: #fff; cursor: pointer; font-size: 14px; }
+    #info { color: #999; font-size: 13px; white-space: pre-wrap; }
+    .ok { color: #7cfc7c; }
+  </style>
+</head>
+<body>
+  <h1>Google ID Token Grabber</h1>
+  <div id="button"></div>
+  <div id="tokenbox" readonly></div>
+  <button id="copy" disabled>Copy token</button>
+  <div id="info"></div>
+
+  <script>
+    const CLIENT_ID = "785634726716-avlh9ppa0n8go6be20tlbfqu6047p8bl.apps.googleusercontent.com";
+    const box = document.getElementById("tokenbox");
+    const copyBtn = document.getElementById("copy");
+    const info = document.getElementById("info");
+    let currentToken = null;
+
+    function handleCredential(response) {
+      currentToken = response.credential;
+      box.textContent = currentToken;
+      localStorage.setItem("google_id_token", currentToken);
+      copyBtn.disabled = false;
+      const payload = JSON.parse(atob(currentToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      const exp = new Date(payload.exp * 1000).toLocaleTimeString();
+      info.textContent = "";
+      info.classList.add("ok");
+      info.textContent = `Signed in as ${payload.email} (${payload.name})\nToken expires: ${exp}  [stored in localStorage as google_id_token]`;
+    }
+
+    google.accounts.id.initialize({
+      client_id: CLIENT_ID,
+      callback: handleCredential,
+      auto_select: false
+    });
+    google.accounts.id.renderButton(document.getElementById("button"), {
+      theme: "outline", size: "large", text: "continue_with", shape: "pill"
+    });
+    google.accounts.id.prompt(); // one-tap attempt
+
+    copyBtn.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(currentToken);
+      copyBtn.textContent = "Copied!";
+      setTimeout(() => (copyBtn.textContent = "Copy token"), 1500);
+    });
+
+    // reload from localStorage if still valid
+    const prev = localStorage.getItem("google_id_token");
+    if (prev) {
+      try {
+        const payload = JSON.parse(atob(prev.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        if (payload.exp * 1000 > Date.now()) {
+          box.textContent = prev;
+          copyBtn.disabled = false;
+          currentToken = prev;
+          info.classList.add("ok");
+          info.textContent = `Restored token from localStorage (${payload.email}). Expires ${new Date(payload.exp * 1000).toLocaleTimeString()}.`;
+        }
+      } catch (_) {}
+    }
+  </script>
+</body>
+</html>

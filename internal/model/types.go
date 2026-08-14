@@ -3,10 +3,12 @@ package model
 import "time"
 
 type User struct {
-	ID       string  `gorm:"primaryKey" json:"id"`
-	Username string  `gorm:"not null;default:'Anonymous'" json:"username"`
-	Email    string  `gorm:"not null;default:''" json:"email"`
-	Avatar   *string `json:"avatar"`
+	ID           string  `gorm:"primaryKey" json:"id"`
+	Username     string  `gorm:"not null;default:'Anonymous'" json:"username"`
+	Email        string  `gorm:"not null;default:''" json:"email"`
+	Avatar       *string `json:"avatar"`
+	GoogleSub    string  `gorm:"column:google_sub;index" json:"-"`
+	AuthProvider string  `gorm:"column:auth_provider;not null;default:'clerk'" json:"-"`
 }
 
 type Chat struct {

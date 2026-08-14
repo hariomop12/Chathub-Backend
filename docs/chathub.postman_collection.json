@@ -1,0 +1,192 @@
+{
+  "info": {
+    "name": "Chathub API",
+    "description": "Standalone backend testing. Set collection variable `token` (Google ID token from http://localhost:5174/token-grabber.html) and `baseUrl` if needed.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000" },
+    { "key": "token", "value": "" },
+    { "key": "chatId", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /readyz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/readyz", "host": ["{{baseUrl}}"], "path": ["readyz"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "GET all users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/users", "host": ["{{baseUrl}}"], "path": ["api", "v1", "users"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Search users?q=",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/search?q=alice",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "search"],
+              "query": [{ "key": "q", "value": "alice" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST upsert current user",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"Hariom OP\",\n  \"email\": \"hariomvirkhare02@gmail.com\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/users", "host": ["{{baseUrl}}"], "path": ["api", "v1", "users"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Chats",
+      "item": [
+        {
+          "name": "POST create chat",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"participantIds\": [\"user-A\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/chats", "host": ["{{baseUrl}}"], "path": ["api", "v1", "chats"] },
+            "event": [
+              {
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "const body = pm.response.json();",
+                    "if (body && body.id) {",
+                    "  pm.collectionVariables.set('chatId', body.id);",
+                    "  console.log('chatId saved:', body.id);",
+                    "}"
+                  ],
+                  "type": "text/javascript"
+                }
+              }
+            ]
+          },
+          "response": []
+        },
+        {
+          "name": "GET all my chats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/chats", "host": ["{{baseUrl}}"], "path": ["api", "v1", "chats"] }
+          },
+          "response": []
+        },
+        {
+          "name": "GET chat by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/chats/{{chatId}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "chats", "{{chatId}}"] }
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE chat",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/chats/{{chatId}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "chats", "{{chatId}}"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Messages",
+      "item": [
+        {
+          "name": "GET messages (paginated)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/messages/{{chatId}}?limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "messages", "{{chatId}}"],
+              "query": [{ "key": "limit", "value": "20" }]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST send message",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Hello alice!\",\n  \"clientMessageId\": \"pm-{{$timestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/messages/{{chatId}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "messages", "{{chatId}}"] }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Files",
+      "item": [
+        {
+          "name": "POST upload file (R2)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [{ "key": "file", "type": "file", "src": [] }]
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/upload", "host": ["{{baseUrl}}"], "path": ["api", "v1", "upload"] }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

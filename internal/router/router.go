@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/auth"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/config"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/handler"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/middleware"
@@ -13,7 +14,6 @@ import (
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/service"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/ws"
 	"github.com/redis/go-redis/v9"
-	"github.com/rs/cors"
 	"gorm.io/gorm"
 )
 
@@ -24,6 +24,7 @@ func New(
 	msgService *service.MessageService,
 	userRepo *repository.UserRepo,
 	chatRepo *repository.ChatRepo,
+	verifier auth.Verifier,
 ) http.Handler {
 	logger := slog.Default()
 
@@ -33,15 +34,17 @@ func New(
 	r.Use(middleware.Logging(logger))
 	r.Use(middleware.Recoverer(logger))
 	r.Use(chimw.RealIP)
+	r.Use(middleware.CORS)
 
 	wsHub := ws.NewHub(chatRepo, userRepo, msgService)
 	wsHub.InitRedis(redisClient)
+	if verifier != nil {
+		wsHub.SetAuthVerifier(verifier)
+	}
 
 	userH := handler.NewUserHandler(userRepo)
 	chatH := handler.NewChatHandler(chatRepo)
 	msgH := handler.NewMessageHandler(msgService, wsHub)
-
-	webhookH := handler.NewWebhookHandler(userRepo, cfg.ClerkWebhookSec)
 
 	uploadH, err := handler.NewUploadHandler(cfg)
 	if err != nil {
@@ -65,20 +68,10 @@ func New(
 	r.Get("/readyz", healthH.Check)
 	r.Get("/ws", wsHub.HandleWS)
 
-	corsHandler := cors.New(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Authorization", "Content-Type", "X-Request-ID"},
-		ExposedHeaders: []string{"X-Request-ID"},
-	})
-
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(corsHandler.Handler)
-		r.Use(middleware.ClerkAuth(cfg.ClerkSecretKey))
-
-		r.Route("/webhooks", func(r chi.Router) {
-			r.Post("/clerk", webhookH.HandleClerk)
-		})
+		if verifier != nil {
+			r.Use(middleware.GoogleAuth(verifier, userRepo))
+		}
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireAuth)

@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/auth"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/config"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/db"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/logging"
@@ -26,6 +27,17 @@ func main() {
 
 	logger := logging.New(cfg.LogLevel)
 	slog.SetDefault(logger)
+
+	if cfg.GoogleClientID == "" {
+		logger.Error("GOOGLE_CLIENT_ID is required")
+		os.Exit(1)
+	}
+
+	verifier, err := auth.NewGoogleVerifier(ctx, cfg.GoogleClientID)
+	if err != nil {
+		logger.Error("google verifier init failed", "error", err)
+		os.Exit(1)
+	}
 
 	database, err := db.Connect(cfg.DatabaseURL)
 	if err != nil {
@@ -58,7 +70,7 @@ func main() {
 		logger.Info("outbox worker started")
 	}
 
-	handler := router.New(cfg, database, redisClient, msgService, userRepo, chatRepo)
+	handler := router.New(cfg, database, redisClient, msgService, userRepo, chatRepo, verifier)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

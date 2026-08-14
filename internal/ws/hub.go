@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/clerk/clerk-sdk-go/v2/jwt"
 	"github.com/gorilla/websocket"
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/auth"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/model"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/repository"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/service"
@@ -36,17 +36,18 @@ type Client struct {
 }
 
 type Hub struct {
-	mu          sync.RWMutex
-	clients     map[*Client]bool
-	userSockets map[string]map[*Client]bool
-	rooms       map[string]map[*Client]bool
-	peerMap     map[string]string
-	redisClient *redis.Client
-	redisSubs   map[string]*redis.PubSub
-	redisSubCnt map[string]int
-	userRepo    *repository.UserRepo
-	chatRepo    *repository.ChatRepo
-	msgService  *service.MessageService
+	mu           sync.RWMutex
+	clients      map[*Client]bool
+	userSockets  map[string]map[*Client]bool
+	rooms        map[string]map[*Client]bool
+	peerMap      map[string]string
+	redisClient  *redis.Client
+	redisSubs    map[string]*redis.PubSub
+	redisSubCnt  map[string]int
+	userRepo     *repository.UserRepo
+	chatRepo     *repository.ChatRepo
+	msgService   *service.MessageService
+	authVerifier auth.Verifier
 }
 
 func NewHub(chatRepo *repository.ChatRepo, userRepo *repository.UserRepo, msgService *service.MessageService) *Hub {
@@ -65,6 +66,10 @@ func NewHub(chatRepo *repository.ChatRepo, userRepo *repository.UserRepo, msgSer
 
 func (h *Hub) SetUserRepo(repo *repository.UserRepo) {
 	h.userRepo = repo
+}
+
+func (h *Hub) SetAuthVerifier(v auth.Verifier) {
+	h.authVerifier = v
 }
 
 func (h *Hub) InitRedis(client *redis.Client) {
@@ -89,11 +94,13 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		rooms: make(map[string]bool),
 	}
 
-	// Auth on upgrade: if a Clerk token is provided (?token=), bind the user id.
-	if token := r.URL.Query().Get("token"); token != "" {
-		if claims, err := jwt.Verify(r.Context(), &jwt.VerifyParams{Token: token}); err == nil && claims != nil {
-			client.userID = claims.Subject
-			slog.Info("[ws] authenticated via token", "userID", client.userID)
+	// Auth on upgrade: if a Google ID token is provided (?token=), bind the user id.
+	if token := r.URL.Query().Get("token"); token != "" && h.authVerifier != nil {
+		if claims, err := h.authVerifier.Verify(r.Context(), token); err == nil && claims != nil {
+			if user, err := h.userRepo.UpsertByGoogle(claims.Sub, claims.Name, claims.Email, claims.Picture); err == nil && user != nil {
+				client.userID = user.ID
+				slog.Info("[ws] authenticated via token", "userID", client.userID)
+			}
 		} else {
 			slog.Warn("[ws] token verification failed", "error", err)
 		}

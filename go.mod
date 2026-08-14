@@ -3,24 +3,22 @@ module github.com/hariomop12/real-time-chat-app/backend-go
 go 1.26.4
 
 require (
-	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/aws/aws-sdk-go-v2 v1.41.12
 	github.com/aws/aws-sdk-go-v2/config v1.32.23
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.22
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.103.2
-	github.com/clerk/clerk-sdk-go/v2 v2.6.0
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
-	github.com/rs/cors v1.11.1
-	github.com/svix/svix-webhooks v1.95.1
+	github.com/redis/go-redis/v9 v9.22.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
 )
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.13 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.22 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.28 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.28 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.28 // indirect
@@ -35,16 +33,15 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.2 // indirect
 	github.com/aws/smithy-go v1.27.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/go-jose/go-jose/v3 v3.0.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/crypto v0.43.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/text v0.30.0 // indirect

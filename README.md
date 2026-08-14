@@ -30,8 +30,8 @@
 - **Dark mode** — Light/dark theme toggle with localStorage persistence + system preference detection
 - **Responsive design** — Mobile-first layout with adaptive sidebar, stacked views on small screens
 - **User search** — Find users by name or email
-- **Clerk authentication** — Secure auth with JWT session tokens
-- **Webhook sync** — Automatic user profile sync via Clerk webhooks
+- **Google Sign-In** — Auth with Google OAuth ID tokens (no password, no session store)
+- **Auto user profile** — Users are created/updated automatically from their Google identity on each authenticated request
 - **Modern UI** — Glass-morphism landing page, gradient accents, smooth transitions
 
 ## 🏗 Architecture
@@ -59,11 +59,10 @@
 |-------|-----------|---------|
 | Router | `chi` v5 | Lightweight, idiomatic HTTP routing |
 | ORM | `GORM` | PostgreSQL database access |
-| Auth | `Clerk SDK` | JWT session verification |
+| Auth | `go-oidc` | Google Sign-In ID token verification (JWKS) |
 | WebSocket | `gorilla/websocket` | Real-time bidirectional communication |
 | Real-time fan-out | `Redis pub/sub` + transactional outbox | Cross-instance message delivery + at-least-once guarantee |
 | File storage | `AWS SDK v2` (S3) | Cloudflare R2 file uploads |
-| Webhooks | `Svix` | Clerk webhook signature verification |
 | Migrations | `dbmate` | Database schema versioning |
 
 ### Frontend (React)
@@ -72,7 +71,7 @@
 |-------|-----------|
 | Framework | React 19 + TypeScript |
 | Build | Vite 8 |
-| Auth | Clerk React SDK |
+| Auth | Google Identity Services (`accounts.google.com/gsi/client`) |
 | Routing | React Router v7 |
 | Styling | CSS variables + inline styles |
 | Theme | React Context + localStorage + `prefers-color-scheme` |
@@ -96,7 +95,7 @@ The app uses separate config for API, WebSocket, and PeerJS connectivity:
 
 - `DATABASE_URL` - PostgreSQL connection string (used by the server and `dbmate` for migrations)
 - `REDIS_URL` - optional Redis URL (e.g. Upstash `rediss://`). Enables cross-instance message fan-out via pub/sub; if unset the server degrades to single-instance in-process broadcast
-- `CLERK_SECRET_KEY` / `CLERK_WEBHOOK_SEC` - Clerk SDK + webhook verification
+- `GOOGLE_CLIENT_ID` - Google OAuth client id (Web application) used to verify Google Sign-In ID tokens
 - `R2_*` / `S3_*` - Cloudflare R2 object storage credentials for uploads
 - `CLIENT_URL` - frontend origin used by backend CORS
 - `VITE_API_URL` - API base URL, usually `http://localhost:5000`
@@ -194,14 +193,16 @@ docker pull ghcr.io/<your-github-username>/chathub-backend:latest
 
 ### API Documentation
 
-```bash
-npx @redocly/cli preview-docs openapi.yaml
-```
-
-Or build static HTML:
+Build a self-contained HTML doc and open it in the browser:
 
 ```bash
 npx @redocly/cli build-docs openapi.yaml -o docs/index.html
+```
+
+Or validate/lint:
+
+```bash
+npx @redocly/cli lint openapi.yaml
 ```
 
 ## 📁 Project Structure
@@ -247,7 +248,6 @@ npx @redocly/cli build-docs openapi.yaml -o docs/index.html
 | `GET` | `/api/v1/messages/:chatId` | ✅ | Get messages |
 | `POST` | `/api/v1/messages/:chatId` | ✅ | Send message |
 | `POST` | `/api/v1/upload` | ✅ | Upload file |
-| `POST` | `/api/v1/webhooks/clerk` | ❌ | Clerk webhook |
 | `WS` | `/ws` | ❌ | WebSocket connection |
 
 All errors use a consistent shape: `{"error": {"code": "NOT_FOUND", "message": "...", "request_id": "..."}}`. Every response includes an `X-Request-ID` header for tracing.
@@ -262,7 +262,7 @@ GET /api/v1/messages/:chatId?cursor=31&limit=20
 
 - `cursor` - `seq` of the last message you have (from the previous page's `nextCursor`); omit for the newest page
 - `limit` - page size, defaults to `50`, max `100`
-- Response: `{"messages": [...], "next_cursor": 31}` — empty/`null` `next_cursor` means no older messages
+- Response: `{"messages": [...], "nextCursor": 31}` — empty/`null` `nextCursor` means no older messages
 
 `POST /api/v1/messages/:chatId` accepts an optional `client_message_id`:
 
@@ -274,7 +274,7 @@ Sending the same `client_message_id` twice is a **no-op** (same message returned
 
 ### WebSocket (`/ws`)
 
-- Connect with the Clerk JWT as a query param: `ws://host/ws?token=<clerk_jwt>`
+- Connect with the Google ID token as a query param: `ws://host/ws?token=<google_id_token>`
 - Server sends `ping` frames and expects `pong` back (60s idle timeout) to keep dead connections cleaned up
 - The server authenticates on upgrade, so the token is never sent as an HTTP header (browsers don't allow custom WS headers)
 - Client events: `join-room`, `leave-room`, `send-message`, `resync`, `typing` / `stop-typing`, `call-user`
@@ -284,11 +284,11 @@ Full flow + reliability guarantees are documented in [`docs/message-send-flow.md
 
 ## 🧪 Tech Stack
 
-**Backend:** Go, Chi, GORM, PostgreSQL, gorilla/websocket, Clerk, Cloudflare R2, Svix, godotenv
+**Backend:** Go, Chi, GORM, PostgreSQL, gorilla/websocket, go-oidc (Google), Cloudflare R2, godotenv
 
-**Frontend:** React 19, TypeScript, Vite, Clerk, Native WebSocket, PeerJS, React Router, Lucide, react-easy-crop
+**Frontend:** React 19, TypeScript, Vite, Google Identity Services, Native WebSocket, PeerJS, React Router, Lucide, react-easy-crop
 
-**Infrastructure:** Docker, GitHub Actions (CI/CD), Neon (PostgreSQL), Cloudflare R2, Clerk Auth, PeerJS
+**Infrastructure:** Docker, GitHub Actions (CI/CD), Neon (PostgreSQL), Cloudflare R2, Google OAuth, PeerJS
 
 ## 🚧 Future Development
 

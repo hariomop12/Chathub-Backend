@@ -9,7 +9,7 @@ info:
     - Keyset (cursor) pagination on messages
     - Idempotent message send via `client_message_id`
     - Transactional outbox + Redis pub/sub for cross-instance fan-out
-    - WebSocket auth on upgrade via `?token=` (Google ID token)
+    - WebSocket auth on upgrade via `?token=` (Clerk JWT)
   version: "1.1.0"
   license:
     name: MIT
@@ -32,10 +32,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: >-
-        Google Sign-In ID token. Obtained from Google Identity Services
-        (accounts.google.com). Issued with a ~1 hour expiry; the audience is
-        our Google OAuth client id. Send it as "Authorization: Bearer <token>".
+      description: Clerk session token
 
   responses:
     Unauthorized:
@@ -79,7 +76,7 @@ components:
         avatar:
           type: string
           nullable: true
-          example: https://example.com/avatar.jpg
+          example: https://img.clerk.com/avatar.jpg
 
     Chat:
       type: object
@@ -299,7 +296,7 @@ paths:
                   example: hariom@example.com
                 avatar:
                   type: string
-                  example: https://example.com/avatar.jpg
+                  example: https://img.clerk.com/avatar.jpg
       responses:
         "200":
           description: User upserted
@@ -579,6 +576,36 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/webhooks/clerk:
+    post:
+      operationId: clerkWebhook
+      summary: Clerk webhook handler (user.created/updated/deleted)
+      tags:
+        - Webhooks
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Webhook received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+        "400":
+          description: Invalid signature
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /ws:
     get:
       operationId: websocketEndpoint
@@ -593,10 +620,10 @@ paths:
           required: true
           schema:
             type: string
-          description: Google Sign-In ID token. Auth happens on upgrade (browsers cannot set WS headers).
+          description: Clerk session JWT. Auth happens on upgrade (browsers cannot set WS headers).
       description: |
         Upgrade to WebSocket for real-time messaging. Connect as
-        `wss://host/ws?token=<google_id_token>` (production uses `/chat-ws?token=...`).
+        `wss://host/ws?token=<clerk_jwt>` (production uses `/chat-ws?token=...`).
 
         **Client → Server events:**
         - `register-user` — `{ userId }`
