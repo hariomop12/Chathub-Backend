@@ -12,12 +12,11 @@ import (
 )
 
 type ChatHandler struct {
-	chatRepo    *repository.ChatRepo
-	messageRepo *repository.MessageRepo
+	chatRepo *repository.ChatRepo
 }
 
-func NewChatHandler(chatRepo *repository.ChatRepo, messageRepo *repository.MessageRepo) *ChatHandler {
-	return &ChatHandler{chatRepo: chatRepo, messageRepo: messageRepo}
+func NewChatHandler(chatRepo *repository.ChatRepo) *ChatHandler {
+	return &ChatHandler{chatRepo: chatRepo}
 }
 
 func (h *ChatHandler) GetChats(w http.ResponseWriter, r *http.Request) {

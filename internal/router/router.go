@@ -10,12 +10,21 @@ import (
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/handler"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/middleware"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/repository"
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/service"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/ws"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/cors"
 	"gorm.io/gorm"
 )
 
-func New(cfg *config.Config, database *gorm.DB, userRepo *repository.UserRepo, chatRepo *repository.ChatRepo, messageRepo *repository.MessageRepo) http.Handler {
+func New(
+	cfg *config.Config,
+	database *gorm.DB,
+	redisClient *redis.Client,
+	msgService *service.MessageService,
+	userRepo *repository.UserRepo,
+	chatRepo *repository.ChatRepo,
+) http.Handler {
 	logger := slog.Default()
 
 	r := chi.NewRouter()
@@ -25,22 +34,12 @@ func New(cfg *config.Config, database *gorm.DB, userRepo *repository.UserRepo, c
 	r.Use(middleware.Recoverer(logger))
 	r.Use(chimw.RealIP)
 
-	corsHandler := cors.New(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Authorization", "Content-Type", "X-Request-ID"},
-		ExposedHeaders: []string{"X-Request-ID"},
-	})
-	r.Use(corsHandler.Handler)
-
-	r.Use(middleware.ClerkAuth(cfg.ClerkSecretKey))
-
-	wsHub := ws.NewHub(messageRepo)
-	wsHub.SetUserRepo(userRepo)
+	wsHub := ws.NewHub(chatRepo, userRepo, msgService)
+	wsHub.InitRedis(redisClient)
 
 	userH := handler.NewUserHandler(userRepo)
-	chatH := handler.NewChatHandler(chatRepo, messageRepo)
-	msgH := handler.NewMessageHandler(messageRepo, wsHub)
+	chatH := handler.NewChatHandler(chatRepo)
+	msgH := handler.NewMessageHandler(msgService, wsHub)
 
 	webhookH := handler.NewWebhookHandler(userRepo, cfg.ClerkWebhookSec)
 
@@ -53,6 +52,9 @@ func New(cfg *config.Config, database *gorm.DB, userRepo *repository.UserRepo, c
 
 	healthH := handler.NewHealthHandler(database)
 
+	// /ws lives at the top level, outside the CORS middleware: rs/cors wraps
+	// the response writer without http.Hijacker support, which breaks
+	// WebSocket upgrades. (The logging middleware forwards Hijack instead.)
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Chat API running..."))
 	})
@@ -61,8 +63,19 @@ func New(cfg *config.Config, database *gorm.DB, userRepo *repository.UserRepo, c
 		w.Write([]byte("OK"))
 	})
 	r.Get("/readyz", healthH.Check)
+	r.Get("/ws", wsHub.HandleWS)
+
+	corsHandler := cors.New(cors.Options{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "X-Request-ID"},
+		ExposedHeaders: []string{"X-Request-ID"},
+	})
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(corsHandler.Handler)
+		r.Use(middleware.ClerkAuth(cfg.ClerkSecretKey))
+
 		r.Route("/webhooks", func(r chi.Router) {
 			r.Post("/clerk", webhookH.HandleClerk)
 		})
@@ -95,8 +108,6 @@ func New(cfg *config.Config, database *gorm.DB, userRepo *repository.UserRepo, c
 			})
 		})
 	})
-
-	r.Get("/ws", wsHub.HandleWS)
 
 	return r
 }

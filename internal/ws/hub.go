@@ -1,16 +1,26 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/clerk/clerk-sdk-go/v2/jwt"
 	"github.com/gorilla/websocket"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/model"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/repository"
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/service"
+	"github.com/redis/go-redis/v9"
+)
+
+const (
+	writeWait      = 10 * time.Second
+	pongWait       = 60 * time.Second
+	pingPeriod     = 30 * time.Second
+	maxMessageSize = 64 * 1024
 )
 
 var upgrader = websocket.Upgrader{
@@ -31,17 +41,25 @@ type Hub struct {
 	userSockets map[string]map[*Client]bool
 	rooms       map[string]map[*Client]bool
 	peerMap     map[string]string
-	messageRepo *repository.MessageRepo
+	redisClient *redis.Client
+	redisSubs   map[string]*redis.PubSub
+	redisSubCnt map[string]int
 	userRepo    *repository.UserRepo
+	chatRepo    *repository.ChatRepo
+	msgService  *service.MessageService
 }
 
-func NewHub(messageRepo *repository.MessageRepo) *Hub {
+func NewHub(chatRepo *repository.ChatRepo, userRepo *repository.UserRepo, msgService *service.MessageService) *Hub {
 	return &Hub{
 		clients:     make(map[*Client]bool),
 		userSockets: make(map[string]map[*Client]bool),
 		rooms:       make(map[string]map[*Client]bool),
 		peerMap:     make(map[string]string),
-		messageRepo: messageRepo,
+		redisSubs:   make(map[string]*redis.PubSub),
+		redisSubCnt: make(map[string]int),
+		chatRepo:    chatRepo,
+		userRepo:    userRepo,
+		msgService:  msgService,
 	}
 }
 
@@ -49,8 +67,15 @@ func (h *Hub) SetUserRepo(repo *repository.UserRepo) {
 	h.userRepo = repo
 }
 
+func (h *Hub) InitRedis(client *redis.Client) {
+	h.redisClient = client
+}
+
+func (h *Hub) RedisEnabled() bool {
+	return h.redisClient != nil
+}
+
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
-	slog.Info("[ws] HandleWS — new WebSocket connection request", "remote", r.RemoteAddr)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("[ws] upgrade failed", "error", err)
@@ -64,9 +89,19 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		rooms: make(map[string]bool),
 	}
 
+	// Auth on upgrade: if a Clerk token is provided (?token=), bind the user id.
+	if token := r.URL.Query().Get("token"); token != "" {
+		if claims, err := jwt.Verify(r.Context(), &jwt.VerifyParams{Token: token}); err == nil && claims != nil {
+			client.userID = claims.Subject
+			slog.Info("[ws] authenticated via token", "userID", client.userID)
+		} else {
+			slog.Warn("[ws] token verification failed", "error", err)
+		}
+	}
+
 	h.mu.Lock()
 	h.clients[client] = true
-	slog.Info("[ws] client added", "total_clients", len(h.clients))
+	slog.Info("[ws] client added", "total_clients", len(h.clients), "userID", client.userID)
 	h.mu.Unlock()
 
 	go client.writePump()
@@ -79,6 +114,13 @@ func (c *Client) readPump() {
 		c.hub.unregister(c)
 		c.conn.Close()
 	}()
+
+	c.conn.SetReadLimit(maxMessageSize)
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
 
 	for {
 		_, msg, err := c.conn.ReadMessage()
@@ -96,30 +138,36 @@ func (c *Client) readPump() {
 			continue
 		}
 
-		slog.Info("[ws] received event", "type", event.Type, "data_len", len(event.Data), "userID", c.userID)
 		c.handleEvent(event)
 	}
 }
 
 func (c *Client) writePump() {
-	defer c.conn.Close()
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.conn.Close()
+	}()
 
-	for msg := range c.send {
-		var evt struct {
-			Type string `json:"type"`
-		}
-		json.Unmarshal(msg, &evt)
-		slog.Debug("[ws] writePump sending", "type", evt.Type, "userID", c.userID)
-		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-			slog.Warn("[ws] writePump error", "error", err, "userID", c.userID)
-			break
+	for {
+		select {
+		case msg, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if !ok {
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				slog.Warn("[ws] writePump error", "error", err, "userID", c.userID)
+				return
+			}
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
-}
-
-type SocketEvent struct {
-	Type string      `json:"type"`
-	Data interface{} `json:"data"`
 }
 
 func (c *Client) handleEvent(event struct {
@@ -127,6 +175,7 @@ func (c *Client) handleEvent(event struct {
 	Data json.RawMessage `json:"data"`
 }) {
 	h := c.hub
+	ctx := context.Background()
 
 	switch event.Type {
 	case "register-user":
@@ -150,11 +199,10 @@ func (c *Client) handleEvent(event struct {
 			}
 			wasOffline := len(h.userSockets[data.UserID]) == 0
 			h.userSockets[data.UserID][c] = true
-			// Send existing online users to the newly registered client
 			for uid := range h.userSockets {
 				if uid != data.UserID {
 					select {
-					case c.send <- mustJSON(SocketEvent{
+					case c.send <- mustJSON(model.SocketEvent{
 						Type: "user-presence",
 						Data: map[string]interface{}{
 							"userId": uid,
@@ -196,9 +244,7 @@ func (c *Client) handleEvent(event struct {
 		peerID := h.peerMap[data.TargetUserID]
 		h.mu.RUnlock()
 
-		slog.Info("[ws] get-peer-id", "targetUserID", data.TargetUserID, "found_peerID", peerID, "requester", c.userID)
-
-		resp, _ := json.Marshal(SocketEvent{
+		resp, _ := json.Marshal(model.SocketEvent{
 			Type: "peer-id-response",
 			Data: map[string]interface{}{"peerId": peerID},
 		})
@@ -209,18 +255,29 @@ func (c *Client) handleEvent(event struct {
 			ChatID string `json:"chatId"`
 		}
 		json.Unmarshal(event.Data, &data)
-		if data.ChatID != "" {
-			h.mu.Lock()
-			if h.rooms[data.ChatID] == nil {
-				h.rooms[data.ChatID] = make(map[*Client]bool)
-			}
-			h.rooms[data.ChatID][c] = true
-			c.rooms[data.ChatID] = true
-			h.mu.Unlock()
-			slog.Info("[ws] join-room", "chatID", data.ChatID, "userID", c.userID, "room_size", len(h.rooms[data.ChatID]))
-		} else {
-			slog.Warn("[ws] join-room — empty chatID", "userID", c.userID, "raw_data", string(event.Data))
+		if data.ChatID == "" || c.userID == "" {
+			slog.Warn("[ws] join-room — missing chatID or userID", "userID", c.userID)
+			return
 		}
+		member, err := h.chatRepo.IsMember(data.ChatID, c.userID)
+		if err != nil {
+			slog.Error("[ws] join-room — membership check error", "chatID", data.ChatID, "error", err)
+			return
+		}
+		if !member {
+			slog.Warn("[ws] join-room — not a member, rejected", "chatID", data.ChatID, "userID", c.userID)
+			c.send <- mustJSON(model.SocketEvent{Type: "join-room-error", Data: map[string]string{"chatId": data.ChatID, "error": "not a member"}})
+			return
+		}
+		h.mu.Lock()
+		if h.rooms[data.ChatID] == nil {
+			h.rooms[data.ChatID] = make(map[*Client]bool)
+		}
+		h.rooms[data.ChatID][c] = true
+		c.rooms[data.ChatID] = true
+		h.mu.Unlock()
+		h.subscribeToChat(data.ChatID)
+		slog.Info("[ws] join-room", "chatID", data.ChatID, "userID", c.userID)
 
 	case "leave-room":
 		var data struct {
@@ -232,6 +289,7 @@ func (c *Client) handleEvent(event struct {
 			delete(h.rooms[data.ChatID], c)
 			delete(c.rooms, data.ChatID)
 			h.mu.Unlock()
+			h.unsubscribeFromChat(data.ChatID)
 		}
 
 	case "typing":
@@ -241,7 +299,7 @@ func (c *Client) handleEvent(event struct {
 			Username string `json:"username"`
 		}
 		json.Unmarshal(event.Data, &data)
-		h.broadcastToRoom(data.ChatID, c, SocketEvent{
+		h.broadcastToRoom(data.ChatID, c, model.SocketEvent{
 			Type: "user-typing",
 			Data: data,
 		})
@@ -252,7 +310,7 @@ func (c *Client) handleEvent(event struct {
 			UserID string `json:"userId"`
 		}
 		json.Unmarshal(event.Data, &data)
-		h.broadcastToRoom(data.ChatID, c, SocketEvent{
+		h.broadcastToRoom(data.ChatID, c, model.SocketEvent{
 			Type: "user-stop-typing",
 			Data: data,
 		})
@@ -260,47 +318,42 @@ func (c *Client) handleEvent(event struct {
 	case "send-message":
 		var data model.MessagePayload
 		json.Unmarshal(event.Data, &data)
+		if c.userID == "" {
+			c.send <- mustJSON(model.SocketEvent{Type: "send-message-error", Data: map[string]string{"error": "not authenticated"}})
+			return
+		}
 		slog.Info("[ws] send-message",
-			"chatID", data.ChatID, "sender", data.SenderID,
+			"chatID", data.ChatID, "sender", c.userID,
 			"content_len", len(data.Content),
-			"fileUrl", data.FileURL != "")
+			"clientMessageId", data.ClientMessageID != "")
 
-		var username string
-		var avatar *string
-		if h.userRepo != nil {
-			if u, err := h.userRepo.GetByID(data.SenderID); err == nil {
-				username = u.Username
-				avatar = u.Avatar
-			}
+		msg, isNew, err := h.msgService.SendMessage(ctx, data.ChatID, c.userID, &data)
+		if err != nil {
+			slog.Error("[ws] send-message error", "error", err, "chatID", data.ChatID)
+			c.send <- mustJSON(model.SocketEvent{Type: "send-message-error", Data: map[string]string{"error": err.Error()}})
+			return
+		}
+		slog.Info("[ws] send-message saved", "msgID", msg.ID, "isNew", isNew)
+
+		if !h.RedisEnabled() {
+			h.BroadcastToRoom(data.ChatID, model.SocketEvent{Type: "receive-message", Data: msg})
 		}
 
-		msg := &model.Message{
-			ID:        uuid.New().String(),
-			ChatID:    data.ChatID,
-			SenderID:  data.SenderID,
-			Content:   data.Content,
-			FileURL:   strPtr(data.FileURL),
-			FileName:  strPtr(data.FileName),
-			FileType:  strPtr(data.FileType),
-			FileSize:  int64Ptr(data.FileSize),
-			CreatedAt: time.Now(),
-			Username:  username,
-			Avatar:    avatar,
+	case "resync":
+		var data struct {
+			ChatID   string `json:"chatId"`
+			AfterSeq int64  `json:"afterSeq"`
 		}
-
-		slog.Info("[ws] broadcasting receive-message", "chatID", data.ChatID, "msgID", msg.ID)
-		h.broadcastToRoom(data.ChatID, nil, SocketEvent{
-			Type: "receive-message",
-			Data: msg,
+		json.Unmarshal(event.Data, &data)
+		msgs, err := h.msgService.GetAfterSeq(ctx, data.ChatID, c.userID, data.AfterSeq, 0)
+		if err != nil {
+			slog.Warn("[ws] resync error", "chatID", data.ChatID, "afterSeq", data.AfterSeq, "error", err)
+			return
+		}
+		c.send <- mustJSON(model.SocketEvent{
+			Type: "resync-messages",
+			Data: map[string]interface{}{"chatId": data.ChatID, "messages": msgs},
 		})
-
-		go func() {
-			if _, err := h.messageRepo.Create(&data); err != nil {
-				slog.Error("[ws] send-message db save error", "error", err)
-			} else {
-				slog.Info("[ws] send-message db saved", "msgID", msg.ID)
-			}
-		}()
 
 	case "call-user":
 		var data struct {
@@ -312,18 +365,12 @@ func (c *Client) handleEvent(event struct {
 		}
 		json.Unmarshal(event.Data, &data)
 
-		slog.Info("[ws] call-user",
-			"from", data.CallerID, "to", data.TargetUserID,
-			"video", data.IsVideo, "caller", c.userID)
-
 		h.mu.RLock()
 		targets := h.userSockets[data.TargetUserID]
 		h.mu.RUnlock()
 
 		if len(targets) > 0 {
-			slog.Info("[ws] call-user — target found, forwarding incoming-call",
-				"targetUserID", data.TargetUserID, "sockets", len(targets))
-			resp, _ := json.Marshal(SocketEvent{
+			resp, _ := json.Marshal(model.SocketEvent{
 				Type: "incoming-call",
 				Data: data,
 			})
@@ -334,9 +381,7 @@ func (c *Client) handleEvent(event struct {
 				}
 			}
 		} else {
-			slog.Warn("[ws] call-user — target offline, sending user-busy",
-				"targetUserID", data.TargetUserID)
-			resp, _ := json.Marshal(SocketEvent{
+			resp, _ := json.Marshal(model.SocketEvent{
 				Type: "user-busy",
 				Data: map[string]string{"targetUserId": data.TargetUserID},
 			})
@@ -348,21 +393,74 @@ func (c *Client) handleEvent(event struct {
 			TargetUserID string `json:"targetUserId"`
 		}
 		json.Unmarshal(event.Data, &data)
-		h.sendToUser(data.TargetUserID, SocketEvent{Type: "call-answered", Data: data})
+		h.sendToUser(data.TargetUserID, model.SocketEvent{Type: "call-answered", Data: data})
 
 	case "call-rejected":
 		var data struct {
 			TargetUserID string `json:"targetUserId"`
 		}
 		json.Unmarshal(event.Data, &data)
-		h.sendToUser(data.TargetUserID, SocketEvent{Type: "call-rejected", Data: data})
+		h.sendToUser(data.TargetUserID, model.SocketEvent{Type: "call-rejected", Data: data})
 
 	case "end-call":
 		var data struct {
 			TargetUserID string `json:"targetUserId"`
 		}
 		json.Unmarshal(event.Data, &data)
-		h.sendToUser(data.TargetUserID, SocketEvent{Type: "call-ended", Data: data})
+		h.sendToUser(data.TargetUserID, model.SocketEvent{Type: "call-ended", Data: data})
+	}
+}
+
+func (h *Hub) subscribeToChat(chatID string) {
+	h.mu.Lock()
+	if h.redisClient == nil {
+		h.mu.Unlock()
+		return
+	}
+	if h.redisSubs[chatID] != nil {
+		h.redisSubCnt[chatID]++
+		h.mu.Unlock()
+		return
+	}
+	ps := h.redisClient.Subscribe(context.Background(), service.ChannelForChat(chatID))
+	h.redisSubs[chatID] = ps
+	h.redisSubCnt[chatID] = 1
+	h.mu.Unlock()
+
+	go h.redisPump(chatID, ps)
+	slog.Info("[ws] redis subscribed", "channel", service.ChannelForChat(chatID))
+}
+
+func (h *Hub) unsubscribeFromChat(chatID string) {
+	h.mu.Lock()
+	if h.redisSubs[chatID] == nil {
+		h.mu.Unlock()
+		return
+	}
+	h.redisSubCnt[chatID]--
+	if h.redisSubCnt[chatID] > 0 {
+		h.mu.Unlock()
+		return
+	}
+	ps := h.redisSubs[chatID]
+	delete(h.redisSubs, chatID)
+	delete(h.redisSubCnt, chatID)
+	h.mu.Unlock()
+
+	go ps.Close()
+	slog.Info("[ws] redis unsubscribed", "channel", service.ChannelForChat(chatID))
+}
+
+func (h *Hub) redisPump(chatID string, ps *redis.PubSub) {
+	ch := ps.Channel()
+	for msg := range ch {
+		var evt model.SocketEvent
+		if err := json.Unmarshal([]byte(msg.Payload), &evt); err != nil {
+			slog.Warn("[ws] redis payload unmarshal error", "chatID", chatID, "error", err)
+			continue
+		}
+		slog.Info("[ws] redis event", "type", evt.Type, "chatID", chatID)
+		h.broadcastToRoom(chatID, nil, evt)
 	}
 }
 
@@ -386,15 +484,22 @@ func (h *Hub) unregister(c *Client) {
 	for roomID := range c.rooms {
 		delete(h.rooms[roomID], c)
 	}
+	rooms := make([]string, 0, len(c.rooms))
+	for roomID := range c.rooms {
+		rooms = append(rooms, roomID)
+	}
 	h.mu.Unlock()
+
+	for _, roomID := range rooms {
+		h.unsubscribeFromChat(roomID)
+	}
 
 	h.mu.RLock()
 	onlineUsers := len(h.userSockets)
-	totalClients := len(h.clients)
 	stillOnline := userID != "" && h.userSockets[userID] != nil
 	h.mu.RUnlock()
 
-	slog.Info("[ws] unregistered", "userID", userID, "online_users", onlineUsers, "total_clients", totalClients)
+	slog.Info("[ws] unregistered", "userID", userID, "online_users", onlineUsers)
 
 	if userID != "" && !stillOnline {
 		h.broadcastPresence(userID, false)
@@ -402,16 +507,13 @@ func (h *Hub) unregister(c *Client) {
 }
 
 func (h *Hub) broadcastPresence(userID string, online bool) {
-	evt := SocketEvent{
+	msg, _ := json.Marshal(model.SocketEvent{
 		Type: "user-presence",
 		Data: map[string]interface{}{
 			"userId": userID,
 			"online": online,
 		},
-	}
-	msg, _ := json.Marshal(evt)
-
-	slog.Info("[ws] broadcastPresence", "userID", userID, "online", online)
+	})
 
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -427,85 +529,37 @@ func (h *Hub) broadcastPresence(userID string, online bool) {
 	}
 }
 
-func (h *Hub) broadcastToRoom(chatID string, exclude *Client, evt SocketEvent) {
+func (h *Hub) BroadcastToRoom(chatID string, evt model.SocketEvent) {
+	h.broadcastToRoom(chatID, nil, evt)
+}
+
+func (h *Hub) broadcastToRoom(chatID string, exclude *Client, evt model.SocketEvent) {
 	msg, _ := json.Marshal(evt)
 
 	h.mu.RLock()
 	roomClients := h.rooms[chatID]
-	allClients := h.clients
-	roomExists := roomClients != nil
-	roomSize := len(roomClients)
-	totalClients := len(allClients)
+	if roomClients == nil {
+		h.mu.RUnlock()
+		return
+	}
+	sent := 0
+	for client := range roomClients {
+		if client == exclude {
+			continue
+		}
+		select {
+		case client.send <- msg:
+			sent++
+		default:
+			slog.Warn("[ws] broadcastToRoom — send channel full, dropping", "userID", client.userID)
+		}
+	}
 	h.mu.RUnlock()
 
-	slog.Info("[ws] broadcastToRoom",
-		"type", evt.Type, "chatID", chatID,
-		"room_exists", roomExists, "room_size", roomSize,
-		"total_clients", totalClients)
-
-	if roomClients != nil {
-		h.mu.RLock()
-		sent := 0
-		for client := range roomClients {
-			if client == exclude {
-				continue
-			}
-			select {
-			case client.send <- msg:
-				sent++
-			default:
-				slog.Warn("[ws] broadcastToRoom — client send channel full, dropping", "userID", client.userID)
-			}
-		}
-		h.mu.RUnlock()
-		slog.Info("[ws] broadcastToRoom — sent to room", "type", evt.Type, "chatID", chatID, "sent", sent)
-	} else {
-		h.mu.RLock()
-		sent := 0
-		for client := range allClients {
-			if client == exclude {
-				continue
-			}
-			select {
-			case client.send <- msg:
-				sent++
-			default:
-				slog.Warn("[ws] broadcastToRoom — allclients send channel full, dropping", "userID", client.userID)
-			}
-		}
-		h.mu.RUnlock()
-		slog.Info("[ws] broadcastToRoom — sent to ALL clients", "type", evt.Type, "chatID", chatID, "sent", sent, "total", totalClients)
-	}
+	slog.Debug("[ws] broadcastToRoom", "type", evt.Type, "chatID", chatID, "sent", sent)
 }
 
-func strPtr(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func int64Ptr(n int64) *int64 {
-	if n == 0 {
-		return nil
-	}
-	return &n
-}
-
-func mustJSON(v interface{}) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		slog.Error("ws marshal error", "error", err)
-		return []byte{}
-	}
-	return b
-}
-
-func (h *Hub) BroadcastToRoom(chatID string, evt SocketEvent) {
-	h.broadcastToRoom(chatID, nil, evt)
-}
-
-func (h *Hub) sendToUser(userID string, evt SocketEvent) {
+func (h *Hub) sendToUser(userID string, evt model.SocketEvent) {
 	msg, _ := json.Marshal(evt)
 
 	h.mu.RLock()
@@ -518,4 +572,13 @@ func (h *Hub) sendToUser(userID string, evt SocketEvent) {
 		default:
 		}
 	}
+}
+
+func mustJSON(v interface{}) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		slog.Error("ws marshal error", "error", err)
+		return []byte{}
+	}
+	return b
 }

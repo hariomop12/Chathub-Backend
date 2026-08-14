@@ -12,12 +12,15 @@ import (
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/config"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/db"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/logging"
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/redisclient"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/repository"
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/router"
+	"github.com/hariomop12/real-time-chat-app/backend-go/internal/service"
 	"github.com/joho/godotenv"
 )
 
 func main() {
+	ctx := context.Background()
 	godotenv.Load()
 	cfg := config.Load()
 
@@ -31,11 +34,31 @@ func main() {
 	}
 	logger.Info("postgres connected")
 
+	redisClient, err := redisclient.New(ctx, cfg.RedisURL)
+	if err != nil {
+		logger.Error("redis connect failed", "error", err)
+		os.Exit(1)
+	}
+	if redisClient != nil {
+		logger.Info("redis connected")
+	} else {
+		logger.Warn("redis not configured — running in degraded single-instance mode")
+	}
+
 	userRepo := repository.NewUserRepo(database)
 	chatRepo := repository.NewChatRepo(database)
 	messageRepo := repository.NewMessageRepo(database)
+	outboxRepo := repository.NewOutboxRepo(database)
 
-	handler := router.New(cfg, database, userRepo, chatRepo, messageRepo)
+	msgService := service.NewMessageService(database, chatRepo, messageRepo, outboxRepo)
+
+	if redisClient != nil {
+		worker := service.NewOutboxWorker(redisClient, outboxRepo, messageRepo)
+		go worker.Run(ctx)
+		logger.Info("outbox worker started")
+	}
+
+	handler := router.New(cfg, database, redisClient, msgService, userRepo, chatRepo)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

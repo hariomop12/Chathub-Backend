@@ -71,6 +71,16 @@ func (r *ChatRepo) GetByUser(userID string) ([]model.Chat, error) {
 	return chats, nil
 }
 
+func (r *ChatRepo) IsMember(chatID, userID string) (bool, error) {
+	var exists bool
+	err := r.db.Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?
+		)
+	`, chatID, userID).Scan(&exists).Error
+	return exists, err
+}
+
 func (r *ChatRepo) FindDirectChat(userID1, userID2 string) (*string, error) {
 	var id string
 	err := r.db.Raw(`

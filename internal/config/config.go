@@ -8,6 +8,7 @@ import (
 type Config struct {
 	Port            string
 	DatabaseURL     string
+	RedisURL        string
 	ClerkSecretKey  string
 	ClerkWebhookSec string
 	R2Endpoint      string
@@ -25,6 +26,7 @@ func Load() *Config {
 	return &Config{
 		Port:            getEnv("PORT", "5000"),
 		DatabaseURL:     getEnv("DATABASE_URL", "postgres://localhost:5432/chat"),
+		RedisURL:        getEnv("REDIS_URL", ""),
 		ClerkSecretKey:  getEnv("CLERK_SECRET_KEY", ""),
 		ClerkWebhookSec: getEnv("CLERK_WEBHOOK_SIGNING_SECRET", ""),
 		R2Endpoint:      getEnv("R2_ENDPOINT", ""),

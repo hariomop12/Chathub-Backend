@@ -61,6 +61,7 @@
 | ORM | `GORM` | PostgreSQL database access |
 | Auth | `Clerk SDK` | JWT session verification |
 | WebSocket | `gorilla/websocket` | Real-time bidirectional communication |
+| Real-time fan-out | `Redis pub/sub` + transactional outbox | Cross-instance message delivery + at-least-once guarantee |
 | File storage | `AWS SDK v2` (S3) | Cloudflare R2 file uploads |
 | Webhooks | `Svix` | Clerk webhook signature verification |
 | Migrations | `dbmate` | Database schema versioning |
@@ -93,6 +94,10 @@
 
 The app uses separate config for API, WebSocket, and PeerJS connectivity:
 
+- `DATABASE_URL` - PostgreSQL connection string (used by the server and `dbmate` for migrations)
+- `REDIS_URL` - optional Redis URL (e.g. Upstash `rediss://`). Enables cross-instance message fan-out via pub/sub; if unset the server degrades to single-instance in-process broadcast
+- `CLERK_SECRET_KEY` / `CLERK_WEBHOOK_SEC` - Clerk SDK + webhook verification
+- `R2_*` / `S3_*` - Cloudflare R2 object storage credentials for uploads
 - `CLIENT_URL` - frontend origin used by backend CORS
 - `VITE_API_URL` - API base URL, usually `http://localhost:5000`
 - `VITE_WS_URL` - optional explicit WebSocket URL, usually `ws://localhost:5000/ws`
@@ -213,8 +218,10 @@ npx @redocly/cli build-docs openapi.yaml -o docs/index.html
 │   ├── logging/             # slog structured logging
 │   ├── middleware/          # Auth, request-id, logging, recoverer
 │   ├── model/               # GORM models
+│   ├── redisclient/         # Redis client wrapper (degraded mode if unset)
 │   ├── repository/          # Data access layer
-│   ├── router/              # Route setup (/api/v1)
+│   ├── router/              # Route setup (/api/v1, /ws)
+│   ├── service/             # Business logic (messages, outbox worker)
 │   └── ws/                  # WebSocket hub
 ├── openapi.yaml             # API specification
 ├── postman/                 # Postman collection
@@ -244,6 +251,36 @@ npx @redocly/cli build-docs openapi.yaml -o docs/index.html
 | `WS` | `/ws` | ❌ | WebSocket connection |
 
 All errors use a consistent shape: `{"error": {"code": "NOT_FOUND", "message": "...", "request_id": "..."}}`. Every response includes an `X-Request-ID` header for tracing.
+
+### Messages (keyset pagination + idempotent send)
+
+`GET /api/v1/messages/:chatId` supports cursor-based (keyset) pagination:
+
+```http
+GET /api/v1/messages/:chatId?cursor=31&limit=20
+```
+
+- `cursor` - `seq` of the last message you have (from the previous page's `nextCursor`); omit for the newest page
+- `limit` - page size, defaults to `50`, max `100`
+- Response: `{"messages": [...], "next_cursor": 31}` — empty/`null` `next_cursor` means no older messages
+
+`POST /api/v1/messages/:chatId` accepts an optional `client_message_id`:
+
+```json
+{"content": "hi", "client_message_id": "uuid-or-any-unique-string"}
+```
+
+Sending the same `client_message_id` twice is a **no-op** (same message returned, no duplicate) — the idempotency key is unique per `(chat_id, client_message_id)`.
+
+### WebSocket (`/ws`)
+
+- Connect with the Clerk JWT as a query param: `ws://host/ws?token=<clerk_jwt>`
+- Server sends `ping` frames and expects `pong` back (60s idle timeout) to keep dead connections cleaned up
+- The server authenticates on upgrade, so the token is never sent as an HTTP header (browsers don't allow custom WS headers)
+- Client events: `join-room`, `leave-room`, `send-message`, `resync`, `typing` / `stop-typing`, `call-user`
+- Server events: `receive-message`, `message-sent`-style acks are sent as `send-message-error` / `join-room-error`, `resync-messages`, `user-typing`, `user-stop-typing`, `incoming-call`, `error`
+
+Full flow + reliability guarantees are documented in [`docs/message-send-flow.md`](docs/message-send-flow.md).
 
 ## 🧪 Tech Stack
 

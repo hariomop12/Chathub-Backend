@@ -1,7 +1,10 @@
 package middleware
 
 import (
+	"bufio"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -28,6 +31,22 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack lets WebSocket upgrades pass through the logging middleware.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("response does not implement http.Hijacker")
+	}
+	return hj.Hijack()
+}
+
+// Flush keeps streaming responses working through the logging middleware.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
