@@ -15,6 +15,8 @@ type Chat struct {
 	ID            string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	Name          *string    `gorm:"type:text" json:"name"`
 	IsGroup       bool       `gorm:"column:is_group;not null;default:false" json:"is_group"`
+	MemberA       *string    `gorm:"column:member_a;type:text" json:"-"`
+	MemberB       *string    `gorm:"column:member_b;type:text" json:"-"`
 	CreatedAt     time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	LastMessage   *string    `gorm:"-" json:"last_message,omitempty"`
 	LastMessageAt *time.Time `gorm:"-" json:"last_message_at,omitempty"`

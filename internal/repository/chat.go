@@ -83,16 +83,39 @@ func (r *ChatRepo) IsMember(chatID, userID string) (bool, error) {
 
 func (r *ChatRepo) FindDirectChat(userID1, userID2 string) (*string, error) {
 	var id string
-	err := r.db.Raw(`
+	result := r.db.Raw(`
 		SELECT c.id FROM chats c
 		WHERE c.is_group = false
 		AND EXISTS (SELECT 1 FROM chat_members WHERE chat_id = c.id AND user_id = ?)
 		AND EXISTS (SELECT 1 FROM chat_members WHERE chat_id = c.id AND user_id = ?)
-	`, userID1, userID2).Scan(&id).Error
-	if err == gorm.ErrRecordNotFound {
+		ORDER BY c.created_at ASC
+		LIMIT 1
+	`, userID1, userID2).Scan(&id)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
 		return nil, nil
 	}
-	return &id, err
+	return &id, nil
+}
+
+// CreateDirect creates a direct (non-group) chat and records the sorted member
+// pair so the unique index uq_direct_chats_pair can guarantee at most one
+// direct chat per user pair.
+func (r *ChatRepo) CreateDirect(name string, userID1, userID2 string) (string, error) {
+	a, b := userID1, userID2
+	if a > b {
+		a, b = b, a
+	}
+	chat := model.Chat{IsGroup: false, MemberA: &a, MemberB: &b}
+	if name != "" {
+		chat.Name = &name
+	}
+	if err := r.db.Create(&chat).Error; err != nil {
+		return "", err
+	}
+	return chat.ID, nil
 }
 
 func (r *ChatRepo) Create(name string, isGroup bool) (string, error) {

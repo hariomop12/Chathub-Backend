@@ -3,6 +3,7 @@ package repository
 import (
 	"github.com/hariomop12/real-time-chat-app/backend-go/internal/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type UserRepo struct {
@@ -21,26 +22,17 @@ func (r *UserRepo) Upsert(id, username, email string, avatar *string) (*model.Us
 
 // UpsertByGoogle finds or creates a user by their Google subject id, then
 // refreshes the display fields. The user id is stable as "google_" + sub so
-// chats and messages keep working across sessions.
+// chats and messages keep working across sessions. The insert is atomic
+// (ON CONFLICT ... DO UPDATE) so concurrent authenticated requests cannot
+// race on the primary key.
 func (r *UserRepo) UpsertByGoogle(sub, username, email, avatar string) (*model.User, error) {
-	var user model.User
-	err := r.db.Where("google_sub = ?", sub).First(&user).Error
-	if err == nil {
-		user.Username = username
-		user.Email = email
-		if avatar != "" {
-			a := avatar
-			user.Avatar = &a
-		}
-		return &user, r.db.Save(&user).Error
-	}
-
 	var avatarPtr *string
 	if avatar != "" {
 		a := avatar
 		avatarPtr = &a
 	}
-	user = model.User{
+
+	user := model.User{
 		ID:           "google_" + sub,
 		Username:     username,
 		Email:        email,
@@ -48,7 +40,20 @@ func (r *UserRepo) UpsertByGoogle(sub, username, email, avatar string) (*model.U
 		GoogleSub:    sub,
 		AuthProvider: "google",
 	}
-	return &user, r.db.Create(&user).Error
+
+	err := r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"username", "email", "avatar"}),
+	}).Create(&user).Error
+	if err != nil {
+		return nil, err
+	}
+
+	var saved model.User
+	if err := r.db.Where("id = ?", user.ID).First(&saved).Error; err != nil {
+		return nil, err
+	}
+	return &saved, nil
 }
 
 func (r *UserRepo) GetAll() ([]model.User, error) {

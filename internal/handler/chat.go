@@ -62,8 +62,22 @@ func (h *ChatHandler) CreateChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	chatID, err := h.chatRepo.Create(req.Name, isGroup)
+	var chatID string
+	var err error
+	if isGroup {
+		chatID, err = h.chatRepo.Create(req.Name, true)
+	} else {
+		chatID, err = h.chatRepo.CreateDirect(req.Name, req.ParticipantIds[0], req.ParticipantIds[1])
+	}
 	if err != nil {
+		// A concurrent request may have just created the same direct chat
+		// (unique index uq_direct_chats_pair fired). Return the winner.
+		if existingID, ferr := h.chatRepo.FindDirectChat(req.ParticipantIds[0], req.ParticipantIds[1]); ferr == nil && existingID != nil {
+			if chat, gerr := h.chatRepo.GetByID(*existingID, userID); gerr == nil {
+				httpapi.WriteJSON(w, http.StatusOK, chat)
+				return
+			}
+		}
 		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to create chat")
 		return
 	}
@@ -71,18 +85,6 @@ func (h *ChatHandler) CreateChat(w http.ResponseWriter, r *http.Request) {
 	if err := h.chatRepo.AddMembers(chatID, req.ParticipantIds); err != nil {
 		httpapi.WriteErr(w, http.StatusInternalServerError, "", "Failed to add members")
 		return
-	}
-
-	if !isGroup {
-		existingID, err := h.chatRepo.FindDirectChat(req.ParticipantIds[0], req.ParticipantIds[1])
-		if err == nil && existingID != nil && *existingID != chatID {
-			h.chatRepo.DeleteDirect(chatID, userID)
-			chat, err := h.chatRepo.GetByID(*existingID, userID)
-			if err == nil {
-				httpapi.WriteJSON(w, http.StatusOK, chat)
-				return
-			}
-		}
 	}
 
 	chat, err := h.chatRepo.GetByID(chatID, userID)
