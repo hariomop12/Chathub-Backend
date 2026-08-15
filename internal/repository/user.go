@@ -15,9 +15,24 @@ func NewUserRepo(db *gorm.DB) *UserRepo {
 }
 
 func (r *UserRepo) Upsert(id, username, email string, avatar *string) (*model.User, error) {
+	if id == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
 	user := &model.User{ID: id, Username: username, Email: email, Avatar: avatar}
-	err := r.db.Save(user).Error
-	return user, err
+	err := r.db.Model(&model.User{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"username": username,
+			"email":    email,
+			"avatar":   avatar,
+		}).Error
+	if err != nil {
+		return nil, err
+	}
+	if err := r.db.First(user, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return user, nil
 }
 
 // UpsertByGoogle finds or creates a user by their Google subject id, then

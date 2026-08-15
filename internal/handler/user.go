@@ -38,6 +38,10 @@ func (h *UserHandler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 
 func (h *UserHandler) UpsertUser(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.UserIDFromCtx(r.Context())
+	if userID == "" {
+		httpapi.WriteErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "Unauthorized")
+		return
+	}
 
 	var body struct {
 		Username string  `json:"username"`
